@@ -1,6 +1,8 @@
 from langgraph.graph import StateGraph, END
 from typing_extensions import TypedDict
 from typing import Dict, List, Optional
+import asyncio
+from mail_utils import send_email
 
 class DeliveryState(TypedDict):
     ticket_id: str
@@ -69,7 +71,32 @@ def node_7_final_price(state: DeliveryState) -> DeliveryState:
     return state
 
 def node_8_notification(state: DeliveryState) -> DeliveryState:
-    state["action_log"].append(f"Notification sent to: {state['user_id']}")
+    """Node 8: Send email notification (fire-and-forget style)"""
+    email = state["inputs"].get("email")
+    total = state["total_price"]
+
+    if email:
+        subject = f"Your Delivery Price - Ticket {state['ticket_id']}"
+        body = (
+            f"Hello {state['user_id']},\n\n"
+            f"Your delivery request (Ticket ID: {state['ticket_id']}) is completed!\n"
+            f"Total Price: ${total:.2f}\n\n"
+            f"Thank you for using Delivery Price Calculator!"
+        )
+        
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+
+        asyncio.ensure_future(send_email([email], subject, body))
+        
+        state["action_log"].append(f"Email queued for {email} with total ${total:.2f}")
+    else:
+        state["action_log"].append("No email provided, skipping notification.")
+
     return state
 
 

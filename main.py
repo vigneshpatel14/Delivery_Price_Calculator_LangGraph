@@ -1,10 +1,12 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import random
+import asyncio
 
 from database import init_db, save_delivery, get_delivery, get_all_deliveries
 from workflow import build_workflow, DeliveryState
+from mail_utils import send_email
 
 
 init_db()
@@ -21,18 +23,16 @@ app.add_middleware(
 )
 
 
-
 class DeliveryRequest(BaseModel):
-    """What user sends"""
     user_id: str
     material_type: str      
     distance: float         
     urgency: str           
     weight: float          
     location_type: str     
+    email: str | None = None
 
 class DeliveryResponse(BaseModel):
-    """What API returns"""
     success: bool
     ticket_id: str
     total_price: float
@@ -41,12 +41,28 @@ class DeliveryResponse(BaseModel):
     status: str
 
 
+async def send_email_background(email: str, ticket_id: str, user_id: str, total: float):
+    """Background task to send email"""
+    subject = f"Your Delivery Price - Ticket {ticket_id}"
+    body = (
+        f"Hello {user_id},\n\n"
+        f"Your delivery request (Ticket ID: {ticket_id}) is completed!\n"
+        f"Total Price: ${total:.2f}\n\n"
+        f"Thank you for using Delivery Price Calculator!"
+    )
+    try:
+        await send_email([email], subject, body)
+        print(f"Email sent successfully to {email}")
+    except Exception as e:
+        print(f"Failed to send email to {email}: {e}")
+
+
 @app.get("/")
 def home():
     return {"message": "API is running!", "docs": "/docs"}
 
 @app.post("/calculate-price", response_model=DeliveryResponse)
-def calculate_price(request: DeliveryRequest):
+async def calculate_price(request: DeliveryRequest, background_tasks: BackgroundTasks):
     print(f"\n{'='*60}")
     print(f"NEW REQUEST")
     print(f"{'='*60}")
@@ -63,7 +79,8 @@ def calculate_price(request: DeliveryRequest):
             "distance": request.distance,
             "urgency": request.urgency,
             "weight": request.weight,
-            "location_type": request.location_type
+            "location_type": request.location_type,
+            "email": request.email
         },
         "base_price": 0.0,
         "material_modifier": 1.0,
@@ -95,6 +112,16 @@ def calculate_price(request: DeliveryRequest):
         final_state["total_price"],
         final_state["status"]
     )
+
+    if request.email:
+        background_tasks.add_task(
+            send_email_background,
+            request.email,
+            ticket_id,
+            request.user_id,
+            final_state["total_price"]
+        )
+        final_state["action_log"].append(f"Email queued for {request.email}")
     
     print(f"\nSaved to database")
     print(f" Done! Total: ${final_state['total_price']:.2f}")

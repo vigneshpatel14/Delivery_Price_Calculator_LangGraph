@@ -3,3 +3,4 @@ uvicorn==0.24.0
 pydantic==2.5.0
 langgraph==0.0.26
 typing-extensions==4.8.0
+fastapi-mail
